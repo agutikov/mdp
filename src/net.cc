@@ -86,7 +86,7 @@ void net_set_buffer_size(int cd, int max, int send)
 	}
 }
 
-void parse_addr(struct net_addr *netaddr, const char *addr, int port) {
+void parse_addr(net_addr *netaddr, const char *addr, int port) {
 	const char *colon = addr + strlen(addr);
 	if (port == 0) {
 		colon = strrchr(addr, ':');
@@ -105,9 +105,9 @@ void parse_addr(struct net_addr *netaddr, const char *addr, int port) {
 	net_gethostbyname(netaddr, host, port);
 }
 
-void net_gethostbyname(struct net_addr *shost, const char *host, int port)
+void net_gethostbyname(net_addr *saddr, const char *host, int port)
 {
-	memset(shost, 0, sizeof(struct net_addr));
+	memset(saddr, 0, sizeof(*saddr));
 
 	struct in_addr in_addr;
 	struct in6_addr in6_addr;
@@ -126,36 +126,32 @@ void net_gethostbyname(struct net_addr *shost, const char *host, int port)
 	return;
 
 got_ipv4:
-	shost->ipver = 4;
-	shost->sockaddr = (struct sockaddr*)&shost->sin4;
-	shost->sockaddr_len = sizeof(shost->sin4);
-	shost->sin4.sin_family = AF_INET;
-	shost->sin4.sin_port = htons(port);
-	shost->sin4.sin_addr = in_addr;
+	saddr->ipver = 4;
+	saddr->sin.sin4.sin_family = AF_INET;
+	saddr->sin.sin4.sin_port = htons(port);
+	saddr->sin.sin4.sin_addr = in_addr;
 	return;
 
 got_ipv6:
-	shost->ipver = 6;
-	shost->sockaddr = (struct sockaddr*)&shost->sin6;
-	shost->sockaddr_len = sizeof(shost->sin6);
-	shost->sin6.sin6_family = AF_INET6;
-	shost->sin6.sin6_port = htons(port);
-	shost->sin6.sin6_addr = in6_addr;
+	saddr->ipver = 6;
+	saddr->sin.sin6.sin6_family = AF_INET6;
+	saddr->sin.sin6.sin6_port = htons(port);
+	saddr->sin.sin6.sin6_addr = in6_addr;
 	return;
 }
 
-const char *addr_to_str(const struct net_addr *addr) {
+const char *addr_to_str(const net_addr *addr) {
 	char dst[INET6_ADDRSTRLEN + 1];
 	int port = 0;
 
 	switch (addr->ipver) {
 	case 4: {
-		inet_ntop(AF_INET, &addr->sin4.sin_addr, dst, INET6_ADDRSTRLEN);
-		port = ntohs(addr->sin4.sin_port);
+		inet_ntop(AF_INET, &addr->sin.sin4.sin_addr, dst, INET6_ADDRSTRLEN);
+		port = ntohs(addr->sin.sin4.sin_port);
 	} break;
 	case 16: {
-		inet_ntop(AF_INET6, &addr->sin6.sin6_addr, dst, INET6_ADDRSTRLEN);
-		port = ntohs(addr->sin6.sin6_port);
+		inet_ntop(AF_INET6, &addr->sin.sin6.sin6_addr, dst, INET6_ADDRSTRLEN);
+		port = ntohs(addr->sin.sin6.sin6_port);
 	} break;
 	default:
 		dst[0] = '?';
@@ -167,7 +163,7 @@ const char *addr_to_str(const struct net_addr *addr) {
 	return buf;
 }
 
-int net_bind_udp(struct net_addr *shost)
+int net_bind_udp(const net_addr *saddr)
 {
 	int sd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sd < 0) {
@@ -181,7 +177,7 @@ int net_bind_udp(struct net_addr *shost)
 		PFATAL("setsockopt(SO_REUSEADDR)");
 	}
 
-	if (bind(sd, shost->sockaddr, shost->sockaddr_len) < 0) {
+	if (bind(sd, saddr->get_sockaddr(), saddr->get_sockaddr_len()) < 0) {
 		PFATAL("bind()");
 	}
 
@@ -189,7 +185,7 @@ int net_bind_udp(struct net_addr *shost)
 }
 
 
-int net_connect_udp(struct net_addr *shost, int src_port)
+int net_connect_udp(const net_addr *saddr, int src_port)
 {
 	int sd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (sd < 0) {
@@ -204,15 +200,13 @@ int net_connect_udp(struct net_addr *shost, int src_port)
 	}
 
 	if (src_port > 1 && src_port < 65536) {
-		struct net_addr src;
-		memset(&src, 0, sizeof(struct net_addr));
-		parse_addr(&src, "0.0.0.0", src_port);
-		if (bind(sd, src.sockaddr, src.sockaddr_len) < 0) {
+		net_addr src("0.0.0.0", src_port);
+		if (bind(sd, src.get_sockaddr(), src.get_sockaddr_len()) < 0) {
 			PFATAL("bind()");
 		}
 	}
 
-	if (-1 == connect(sd, shost->sockaddr, shost->sockaddr_len)) {
+	if (-1 == connect(sd, saddr->get_sockaddr(), saddr->get_sockaddr_len())) {
 		/* is non-blocking, so we don't get error at that point yet */
 		if (EINPROGRESS != errno) {
 			PFATAL("connect()");
