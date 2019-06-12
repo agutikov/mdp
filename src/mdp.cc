@@ -9,6 +9,8 @@
 #include <iostream>
 #include <cstring>
 #include <mutex>
+#include <atomic>
+#include <algorithm>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -47,6 +49,8 @@ struct mdp_peer
     uint64_t last_sended_msg_id = 0;
     uint64_t complete_confirmed_msg_id = 0;
 
+    std::chrono::steady_clock::time_point last_heartbeat_sent = std::chrono::steady_clock::now();
+
     int client_socket_fd = -1;
 
     // map of started transmissions with confirmation waiters
@@ -70,10 +74,72 @@ struct mdp_iovecs
     iovec payload_iovec;
 } __attribute__((packed));
 
-uint64_t last_peer_id = 0;
+std::atomic<uint64_t> last_peer_id = 0;
 
 std::map<uint64_t, std::shared_ptr<mdp_peer>> peer_by_id;
 std::map<net_addr, std::shared_ptr<mdp_peer>> peer_by_addr;
+std::mutex peer_mutex;
+
+std::vector<std::shared_ptr<mdp_peer>> get_all_peers()
+{
+    std::vector<std::shared_ptr<mdp_peer>> all_peers;
+
+    std::lock_guard<std::mutex> lock(peer_mutex);
+    std::transform(peer_by_addr.begin(), peer_by_addr.end(), std::back_inserter(all_peers), [](auto p){return p.second;});
+
+    return std::move(all_peers);
+}
+
+std::shared_ptr<mdp_peer> get_peer_by_id(uint64_t id)
+{
+    std::lock_guard<std::mutex> lock(peer_mutex);
+
+    auto peer_it = peer_by_id.find(id);
+    if (peer_it == peer_by_id.end()) {
+        return nullptr;
+    } else {
+        return peer_it->second;
+    }
+}
+
+std::shared_ptr<mdp_peer> get_peer_by_addr(const net_addr& addr)
+{
+    std::lock_guard<std::mutex> lock(peer_mutex);
+
+    auto peer_it = peer_by_addr.find(addr);
+    if (peer_it == peer_by_addr.end()) {
+        return nullptr;
+    } else {
+        return peer_it->second;
+    }
+}
+
+std::shared_ptr<mdp_peer> new_peer(const net_addr& addr)
+{
+    printf("new peer %s\n", addr_to_str(&addr));
+    auto peer = std::make_shared<mdp_peer>();
+    peer->id = last_peer_id.fetch_add(1);
+    peer->addr = addr;
+
+    {
+        std::lock_guard<std::mutex> lock(peer_mutex);
+
+        peer_by_addr.emplace(std::make_pair(peer->addr, peer));
+        peer_by_id.emplace(std::make_pair(peer->id, peer));
+    }
+
+    return peer;
+}
+
+std::shared_ptr<mdp_peer> get_or_create_peer(const net_addr& addr)
+{
+    auto peer = get_peer_by_addr(addr);
+    //printf("get_or_create_peer %s %s %p %lu\n", std::string(addr).c_str(), peer ? std::string(peer->addr).c_str() : "null", peer.get(), peer_by_addr.size());
+    if (!peer) {
+        peer = new_peer(addr);
+    }
+    return peer;
+}
 
 
 struct stats_t
@@ -152,94 +218,113 @@ struct receiver_state {
 receiver_state rstate;
 
 
-void handle_data_msg(const mdp_msg_header* mdp_msg, const net_addr* peer_addr, const iovec* payload_iovec)
+void peer_add_pending_confirmation(std::shared_ptr<mdp_peer> peer, uint64_t msg_id, uint64_t flags)
 {
-    //printf("xxx\n");
-
-    auto peer_it = peer_by_addr.find(*peer_addr);
-    if (peer_it == peer_by_addr.end()) {
-
-        //printf("YYY\n");
-
-        last_peer_id++;
-        auto peer = std::make_shared<mdp_peer>();
-        peer->id = last_peer_id;
-        peer->addr = *peer_addr;
-        //printf("YYY\n");
-
-        printf("new peer %s\n", addr_to_str(&peer->addr));
-        auto it = peer_by_addr.emplace(std::make_pair(peer->addr, peer));
-        peer_it = it.first;
-        //printf("YYYY\n");
-
-        peer_by_id.emplace(std::make_pair(peer->id, peer));
-    }
-
-    //printf("xxx\n");
-
-    auto peer = peer_it->second;
-    uint64_t msg_id = mdp_msg->get_id();
-
     //printf("%s: %d %d %d\n", addr_to_str(&peer->addr), peer->id, peer->rcvd.size(), peer->confirmations.size());
-
     mdp_confirmation c;
-    c.flags_and_id = mdp_msg->flags_and_id | (((uint64_t)MDP_MSG_FLAG_DELIVERED) << 56);
+    c.flags_and_id = flags | (((uint64_t)MDP_MSG_FLAG_DELIVERED) << 56);
 
     {
         std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
-        peer->confirmations[msg_id] = c;
+
+        peer->confirmations.emplace(msg_id, c);
     }
+}
 
-    std::vector<uint8_t> v(mdp_msg->msg_size_bytes);
-    memcpy(v.data(), payload_iovec->iov_base, v.size());
+void peer_copy_rcvd_data(std::shared_ptr<mdp_peer> peer, void* ptr, uint32_t size)
+{
+    std::vector<uint8_t> v(size);
+    memcpy(v.data(), ptr, v.size());
     peer->rcvd.push_back(std::move(v));
+}
 
+void peer_DEBUG_drop_rcvd_data(std::shared_ptr<mdp_peer> peer)
+{
     if (peer->rcvd.size() >= 1000000) {
         std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
+
         printf("RCVD LIMIT: %lu %lu \n", peer->rcvd.size(), peer->confirmations.size());
+
         peer->rcvd.clear();
+
         if (peer->confirmations.size() > 1000000) {
-            peer->confirmations.clear();
+            printf("Confirmations not trimming");
+            exit(1);
         }
     }
+}
+
+void handle_data_msg(const mdp_msg_header* mdp_msg, const net_addr& peer_addr, const iovec* payload_iovec)
+{
+    //printf("%s\n", addr_to_str(&peer_addr));
+
+    auto peer = get_or_create_peer(peer_addr);
+
+    uint64_t msg_id = mdp_msg->get_id();
+
+    peer_add_pending_confirmation(peer, msg_id, mdp_msg->flags_and_id);
+
+    peer_copy_rcvd_data(peer, payload_iovec->iov_base, mdp_msg->msg_size_bytes);
+
+    peer_DEBUG_drop_rcvd_data(peer);
 
     rstate.data_stats.consume(1, mdp_msg->msg_size_bytes);
 }
 
-void handle_service_msg(const mdp_msg_header* mdp_msg, const net_addr* peer_addr, const iovec* payload_iovec)
+void peer_trim_confirmations(std::shared_ptr<mdp_peer> peer, uint64_t peers_complete_confirmed_msg_id)
+{
+    std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
+
+    // printf("%d %d %d\n", peer->confirmations.begin()->first, peers_complete_confirmed_msg_id, peer->confirmations.size());
+
+    //printf("peer_trim_confirmations %lu %lu %lu\n", peer->confirmations.size(), peer->confirmations.begin()->first, peers_complete_confirmed_msg_id);
+
+    while (!peer->confirmations.empty() && peer->confirmations.begin()->first <= peers_complete_confirmed_msg_id) {
+        peer->confirmations.erase(peer->confirmations.begin()->first);
+    }
+    // printf("> %d %d %d\n", peer->confirmations.begin()->first, peers_complete_confirmed_msg_id, peer->confirmations.size());
+}
+
+void peer_consume_confirmations(std::shared_ptr<mdp_peer> peer, const uint64_t* confirms, int conf_number)
+{
+    for (int i = 1; i < conf_number; i++) {
+
+        uint64_t confirm_msg_id = confirms[i] & MDP_MSG_ID_MASK;
+        //printf("peer_consume_confirmations %d %d %lu\n", conf_number, i, confirm_msg_id);
+        // TODO: confirm message delivery
+
+        // update complete_confirmed_msg_id
+        // TODO: stub implementation - correct is getting min id of pending data messages (no pending data messages implemented)
+        if (peer->complete_confirmed_msg_id < confirm_msg_id) {
+            // printf("%d %d\n", peer->complete_confirmed_msg_id, conf_id);
+            peer->complete_confirmed_msg_id = confirm_msg_id;
+            // printf("> %d %d\n", peer->complete_confirmed_msg_id, conf_id);
+        }
+    }
+}
+
+void handle_confirm_msg(const mdp_msg_header* mdp_msg, const net_addr& peer_addr, const iovec* payload_iovec)
 {
     uint64_t* confirms = (uint64_t*)payload_iovec->iov_base;
-    int conf_number = mdp_msg->msg_size_bytes / 8;
+    int conf_number = mdp_msg->msg_size_bytes / sizeof(uint64_t) - 1;
     // printf("%d %d\n", mdp_msg->msg_size_bytes, conf_number);
 
-    auto peer_it = peer_by_addr.find(*peer_addr);
-    if (peer_it != peer_by_addr.end()) {
-        auto peer = peer_it->second;
+    auto peer = get_or_create_peer(peer_addr);
 
-        if (conf_number > 0) {
-            uint64_t peers_complete_confirmed_msg_id = confirms[0];
-            std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
+    //printf("handle_confirm_msg %d\n", conf_number);
 
-            // printf("%d %d %d\n", peer->confirmations.begin()->first, peers_complete_confirmed_msg_id, peer->confirmations.size());
+    if (conf_number > 0) {
+        // Producer side (data message sender)
+        peer_consume_confirmations(peer, confirms + 1, conf_number);
+    }
+    // Consumer side (data message receiver)
+    peer_trim_confirmations(peer, *confirms);
+}
 
-            while (!peer->confirmations.empty() && peer->confirmations.begin()->first <= peers_complete_confirmed_msg_id) {
-                peer->confirmations.erase(peer->confirmations.begin()->first);
-            }
-            // printf("> %d %d %d\n", peer->confirmations.begin()->first, peers_complete_confirmed_msg_id, peer->confirmations.size());
-        }
-
-        for (int i = 1; i < conf_number; i++) {
-            uint64_t conf_id = confirms[i] & MDP_MSG_ID_MASK;
-            // TODO: confirm msg delivery
-
-            // update complete_confirmed_msg_id
-            // TODO: stub implementation - correct is getting min id of pending messages
-            if (peer->complete_confirmed_msg_id < conf_id) {
-                // printf("%d %d\n", peer->complete_confirmed_msg_id, conf_id);
-                peer->complete_confirmed_msg_id = conf_id;
-                // printf("> %d %d\n", peer->complete_confirmed_msg_id, conf_id);
-            }
-        }
+void handle_service_msg(const mdp_msg_header* mdp_msg, const net_addr& peer_addr, const iovec* payload_iovec)
+{
+    if ((mdp_msg->get_flags() & MDP_MSG_FLAG_SERVICE_CONFIRMATION) == MDP_MSG_FLAG_SERVICE_CONFIRMATION) {
+        handle_confirm_msg(mdp_msg, peer_addr, payload_iovec);
     }
 }
 
@@ -254,12 +339,14 @@ void handle_rcvd_msg(const mmsghdr* msg, size_t length)
 
     iovec* payload_iovec = &msg->msg_hdr.msg_iov[1];
 
+    //printf("handle_rcvd_msg 0x%02X 0x%016lX\n", mdp_msg->get_flags(), mdp_msg->flags_and_id);
+
     if ((mdp_msg->get_flags() & MDP_MSG_FLAG_SERVICE) == 0) {
-        handle_data_msg(mdp_msg, &peer_addr, payload_iovec);
+        handle_data_msg(mdp_msg, peer_addr, payload_iovec);
     }
 
     if ((mdp_msg->get_flags() & MDP_MSG_FLAG_SERVICE) == MDP_MSG_FLAG_SERVICE) {
-        handle_service_msg(mdp_msg, &peer_addr, payload_iovec);
+        handle_service_msg(mdp_msg, peer_addr, payload_iovec);
     }
 }
 
@@ -361,64 +448,133 @@ struct sender_state
 
 sender_state sstate;
 
-static void sender_prepare_confirms()
+void* sstate_prepare_msg(const net_addr& addr, uint32_t size, uint64_t flags_and_id)
 {
-    for (auto peer_it : peer_by_addr) {
-        auto peer = peer_it.second;
+    if (sstate.msg_count >= sstate.messages_capacity) {
+        return nullptr;
+    }
 
-        std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
+    if (size > sstate.payload_max_size) {
+        // Not implemented
+        return nullptr;
+    }
 
-        int conf_packed = 0;
-        auto conf_it = peer->confirmations.begin();
-        while (conf_packed < peer->confirmations.size()) {
+    // get message pointer
+    struct mmsghdr *msg = &(sstate.messages[sstate.msg_count]);
 
-            struct mmsghdr *msg = &(sstate.messages[sstate.msg_count]);
-            msg->msg_hdr.msg_name = peer->addr.get_sockaddr();
-            msg->msg_hdr.msg_namelen = peer->addr.get_sockaddr_len();
+    // fill UDP destination address
+    msg->msg_hdr.msg_name = addr.get_sockaddr();
+    msg->msg_hdr.msg_namelen = addr.get_sockaddr_len();
 
-            sstate.headers[sstate.msg_count].flags_and_id = 0;
-            sstate.headers[sstate.msg_count].set_flags(MDP_MSG_FLAG_SERVICE | MDP_MSG_FLAG_SERVICE_CONFIRMATION);
+    // fill MDP message header
+    mdp_msg_header* h = &sstate.headers[sstate.msg_count];
+    h->flags_and_id = flags_and_id;
+    h->msg_size_bytes = size;
+    h->multipart_msg_block_seq_num = 0;
+    h->crc32 = 0xCCCCCCCC; // not implemented
 
-            sstate.headers[sstate.msg_count].msg_size_bytes = 8;
-            uint64_t* confirms = (uint64_t*) sstate.iovecs[sstate.msg_count].payload_iovec.iov_base;
-            confirms[0] = peer->complete_confirmed_msg_id;
-            int conf_countr = 1;
+    // header iovec is already filled in sender_state constructor
+    mdp_iovecs* iov = &sstate.iovecs[sstate.msg_count];
+    iov->payload_iovec.iov_len = size;
 
-            {
-                //std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
-                for (; conf_it != peer->confirmations.end(); conf_it++) {
-                    confirms[conf_countr] = conf_it->second.flags_and_id;
+    sstate.msg_count++;
 
-                    conf_packed++;
-                    conf_countr++;
-                    if (conf_countr >= sstate.payload_max_size / 8) {
-                        break;
-                    }
-                }
-            }
-            sstate.headers[0].msg_size_bytes = conf_countr * 8;
-            sstate.iovecs[sstate.msg_count].payload_iovec.iov_len = sstate.headers[0].msg_size_bytes;
+    return iov->payload_iovec.iov_base;
+}
 
-            sstate.msg_count++;
-            if (sstate.msg_count >= sstate.messages_capacity) {
-                return;
-            }
+void* sstate_prepare_data_msg(const net_addr& addr, uint32_t size, int64_t msg_id)
+{
+    // TODO: msg_id >>>>> peer->last_sended_msg_id
+    return sstate_prepare_msg(addr, size, msg_id);
+}
+
+void* sstate_prepare_service_msg(const net_addr& addr, uint8_t flags, uint32_t size)
+{
+    return sstate_prepare_msg(addr, size, MDP_MSG_FLAGS(MDP_MSG_FLAG_SERVICE | flags));
+}
+
+void sstate_prepare_peer_confirm_msgs(std::shared_ptr<mdp_peer> peer)
+{
+    auto conf_it = peer->confirmations.begin();
+    auto end = peer->confirmations.end();
+    size_t pending_confirms_count = peer->confirmations.size();
+
+    while (conf_it != end && sstate.msg_count < sstate.messages_capacity) {
+
+        int confirms_capacity = sstate.payload_max_size / sizeof(uint64_t) - 1;
+
+        if (pending_confirms_count < confirms_capacity) {
+            confirms_capacity = pending_confirms_count;
         }
+
+        uint32_t size = (confirms_capacity + 1) * sizeof(uint64_t);
+
+        uint64_t* confirms = (uint64_t*) sstate_prepare_service_msg(peer->addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, size);
+        if (confirms == nullptr) {
+            break;
+        }
+
+        *confirms++ = peer->complete_confirmed_msg_id;
+
+        // fill MDP table of confirmations
+        for (int confirms_count = 0; conf_it != end && confirms_count < confirms_capacity; conf_it++, confirms_count++) {
+            *confirms++ = conf_it->second.flags_and_id;
+        }
+
+        pending_confirms_count -= confirms_capacity;
     }
 }
 
+void sstate_prepare_peer_heartbeat_msg(std::shared_ptr<mdp_peer> peer)
+{
+    if (peer->last_heartbeat_sent + 1s > std::chrono::steady_clock::now()) {
+        return;
+    }
+
+    uint64_t* confirms = (uint64_t*) sstate_prepare_service_msg(peer->addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, sizeof(uint64_t));
+    if (confirms == nullptr) {
+        return;
+    }
+
+    *confirms = peer->complete_confirmed_msg_id;
+
+    peer->last_heartbeat_sent = std::chrono::steady_clock::now() + 1s;
+}
+
+void sstate_prepare_peer_confirms(std::shared_ptr<mdp_peer> peer)
+{
+    std::lock_guard<std::mutex> lock(peer->confirmations_mutex);
+
+    if (peer->confirmations.empty()) {
+        sstate_prepare_peer_heartbeat_msg(peer);
+    } else {
+        sstate_prepare_peer_confirm_msgs(peer);
+    }
+}
+
+static void sender_prepare_confirms()
+{
+    auto all_peers = get_all_peers();
+
+    for (auto peer : all_peers) {
+        sstate_prepare_peer_confirms(peer);
+    }
+    //printf("sender_prepare_confirms %d\n", sstate.msg_count);
+}
+
+int64_t number_of_load_messages = 1;
+
 static void sender_generate_load()
 {
-    for (; sstate.msg_count < sstate.messages_capacity; sstate.msg_count++) {
-        struct mmsghdr *msg = &(sstate.messages[sstate.msg_count]);
-        msg->msg_hdr.msg_name = sstate.target_addr.get_sockaddr();
-        msg->msg_hdr.msg_namelen = sstate.target_addr.get_sockaddr_len();
-
-        //memset(sstate.iovecs[sstate.msg_count].payload_iovec.iov_base, 0xAB, sstate.payload_max_size);
-        sstate.iovecs[sstate.msg_count].payload_iovec.iov_len = sstate.payload_max_size;
-        sstate.headers[sstate.msg_count].msg_size_bytes = sstate.payload_max_size;
-
-        sstate.headers[sstate.msg_count].flags_and_id = sstate.last_id++; // peer->last_sended_msg_id
+    for (;
+        sstate.msg_count < sstate.messages_capacity && number_of_load_messages > 0;
+        sstate.msg_count++, number_of_load_messages--)
+    {
+        //TODO: Nobody waits for confirmation, because peer not created yet, because data msgs generated inside sender thread
+        void* data = sstate_prepare_data_msg(sstate.target_addr, sstate.payload_max_size, sstate.last_id++); // peer->last_sended_msg_id
+        if (data) {
+            memset(data, 0xAB, sstate.payload_max_size);
+        }
     }
 }
 
@@ -473,6 +629,8 @@ static void sender_thread_task()
     }
 
     sender_send_messages();
+
+    //std::this_thread::sleep_for(1s);
 }
 
 static void sender_thread_loop()
@@ -550,11 +708,11 @@ std::list<std::vector<uint8_t>> mdp_get_rcvd(uint64_t peer_id)
 
 bool mdp_is_delivered(uint64_t peer_id, uint64_t msg_id)
 {
-    auto peer_it = peer_by_id.find(peer_id);
-    if (peer_it == peer_by_id.end()) {
+    auto peer = get_peer_by_id(peer_id);
+    if (!peer) {
         return false;
     }
-    auto& peer = peer_it->second;
+
     if (peer->complete_confirmed_msg_id >= msg_id) {
         return true;
     }

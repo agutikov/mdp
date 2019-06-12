@@ -22,6 +22,8 @@
 #define MDP_MSG_ID_MAX (0x003FFFFFFFFFFFFFul)
 #define MDP_MSG_ID_MASK (~(0xFFull << 56))
 
+#define MDP_MSG_FLAGS(X) (((uint64_t)(X)) << 56)
+
 //TODO: Destination peer ID - ?
 
 struct mdp_msg_header

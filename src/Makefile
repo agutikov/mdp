@@ -10,8 +10,8 @@ all: peer
 clean:
 	rm -f peer
 
-.PHONY: remake
-remake: clean all
+.PHONY: rebuild
+rebuild: clean all
 
 peer: peer.cc mdp.cc net.cc
 	g++ $(CFLAGS) $^ -o $@

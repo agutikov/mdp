@@ -1,0 +1,22 @@
+
+
+
+dump state: sender, receiver, peer
+
+multiple peers responses
+heartbeat
+
+test / banchmark with external library client application
+
+retransmits, confirmations, timeouts
+
+complete algorythm implementation
+
+======================================
+
+multithread handle rcvd msgs
+
+multithread send
+
+optimized data structures, lockless
+

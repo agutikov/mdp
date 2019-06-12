@@ -163,6 +163,7 @@ const char *addr_to_str(const net_addr *addr) {
 	return buf;
 }
 
+
 int net_bind_udp(const net_addr *saddr)
 {
 	int sd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
