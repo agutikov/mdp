@@ -22,6 +22,8 @@
 #define MDP_MSG_ID_MAX (0x003FFFFFFFFFFFFFul)
 #define MDP_MSG_ID_MASK (~(0xFFull << 56))
 
+#define MDP_GET_ID(_flags_and_id_) ((_flags_and_id_) & MDP_MSG_ID_MASK)
+
 #define MDP_MSG_FLAGS(X) (((uint64_t)(X)) << 56)
 
 //TODO: Destination peer ID - ?
@@ -29,7 +31,7 @@
 struct mdp_msg_header
 {
     inline uint8_t get_flags() const { return flags_and_id >> 56; }
-    inline uint64_t get_id() const { return flags_and_id & MDP_MSG_ID_MASK; }
+    inline uint64_t get_id() const { return MDP_GET_ID(flags_and_id); }
     inline void set_flags(uint8_t flags) { flags_and_id |= ((uint64_t)flags) << 56; }
 
     uint64_t flags_and_id;

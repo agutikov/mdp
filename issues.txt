@@ -1,10 +1,16 @@
 
 
 
-dump state: sender, receiver, peer
++ moved flags, flags/id macroses, flags_and_id class
 
-multiple peers responses
-heartbeat
+
++ send complete_confirmed_msg_id with each packet, heartbeat only when no transmission
+
+
+heartbeat timeout drop peer
+
+
+
 
 test / banchmark with external library client application
 
