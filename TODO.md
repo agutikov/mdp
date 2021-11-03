@@ -49,10 +49,6 @@ preallocate all buffers, only move pointers
 
 ======================================
 
-cmake
-
-======================================
-
 
 mustipart messages
 

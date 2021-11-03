@@ -1,5 +1,4 @@
-#ifndef __MDP_HH__
-#define __MDP_HH__
+#pragma once
 
 /*
  * SPRMDP - Simple Parallel Reliable Message Delivery Protocol.
@@ -59,4 +58,3 @@ TODO:
 
 void mdp_print_state();
 
-#endif

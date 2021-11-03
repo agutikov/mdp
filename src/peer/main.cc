@@ -1,5 +1,5 @@
 
-#include "mdp.hh"
+#include "mdp.h"
 #include <chrono>
 #include <thread>
 #include <cstdio>

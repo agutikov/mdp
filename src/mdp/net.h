@@ -1,5 +1,4 @@
-#ifndef __NET_H__
-#define __NET_H__
+#pragma once
 
 
 #include <string>
@@ -115,4 +114,3 @@ inline bool operator<(const net_addr& l, const net_addr& r )
 }
 
 
-#endif
