@@ -21,6 +21,66 @@
 using namespace std::chrono_literals;
 
 
+
+#define MDP_MSG_FLAG_SERVICE (0x80)
+#define MDP_MSG_FLAG_DELIVERED (0x40)
+#define MDP_MSG_FLAG_MULTIPART (0x20)
+#define MDP_MSG_FLAG_CANCELLED (0x10)
+#define MDP_MSG_FLAG_SERVICE_TYPE_MASK (0x0F)
+
+#define MDP_MSG_FLAG_SERVICE_CONFIRMATION (0x01)
+
+#define MDP_MSG_ID_MAX (0x003FFFFFFFFFFFFFul)
+#define MDP_MSG_ID_MASK (~(0xFFull << 56))
+
+#define MDP_GET_ID(_flags_and_id_) ((_flags_and_id_) & MDP_MSG_ID_MASK)
+
+#define MDP_MSG_FLAGS(X) (((uint64_t)(X)) << 56)
+
+
+
+struct mdp_msg_header
+{
+    inline uint8_t get_flags() const { return flags_and_id >> 56; }
+    inline uint64_t get_id() const { return MDP_GET_ID(flags_and_id); }
+    inline void set_flags(uint8_t flags) { flags_and_id |= ((uint64_t)flags) << 56; }
+
+    uint64_t flags_and_id;
+
+    uint32_t msg_size_bytes;
+
+    uint32_t multipart_msg_block_seq_num;
+
+    uint32_t crc32;
+
+    //const void* get_data() const { return ((const uint8_t*)this) + sizeof(*this); }
+
+} __attribute__((packed));
+
+
+struct mdp_msg_confirmation_error
+{
+    uint32_t multipart_msg_block_seq_num;
+    uint32_t flags;
+    uint32_t data; // crc32 or msg length
+} __attribute__((packed));
+
+struct mdp_msg_confirmation_header
+{
+    // mdp_msg_header header;
+
+    uint64_t complete_confirmed_msg_id; // non-decreasing sequence of delivered msg ID - confirmes confirmation received
+
+
+
+    // optional confirmation bitmap
+
+    // optional error list
+
+} __attribute__((packed));
+
+
+
 //TODO: Solve problen how to drop connection? When one side forget about peer then it re-creates it after receiving next heartbeat.
 
 // Forget about peer after heartbeat timeout
@@ -662,7 +722,7 @@ static void sender_prepare_service_messages()
     }
 }
 
-int64_t number_of_load_messages = 10000000;
+int64_t number_of_load_messages = 1000'000'000;
 
 static void sender_generate_load()
 {
@@ -756,7 +816,7 @@ std::thread sender_thread;
 
 void mdp_start_receiver(const char* listen_addr, uint16_t listen_port)
 {
-    int recv_buf_size = 4*1024;
+    int recv_buf_size = 16*1024*1024;
 
     rstate.listen_addr.from_str(listen_addr, listen_port);
 

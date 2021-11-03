@@ -68,7 +68,7 @@ void net_set_buffer_size(int cd, int max, int send)
 	}
 
 	for (i = 0; i < 10; i++) {
-		int bef;
+		int bef = 0;
 		socklen_t size = sizeof(bef);
 		if (getsockopt(cd, SOL_SOCKET, flag, &bef, &size) < 0) {
 			PFATAL("getsockopt(SOL_SOCKET)");
@@ -78,8 +78,8 @@ void net_set_buffer_size(int cd, int max, int send)
 			break;
 		}
 
-		size = bef * 2;
-		if (setsockopt(cd, SOL_SOCKET, flag, &size, sizeof(size)) < 0) {
+		bef *= 2;
+		if (setsockopt(cd, SOL_SOCKET, flag, &bef, sizeof(size)) < 0) {
 			// don't log error, just break
 			break;
 		}

@@ -11,69 +11,15 @@
 #include <list>
 #include <vector>
 
-#define MDP_MSG_FLAG_SERVICE (0x80)
-#define MDP_MSG_FLAG_DELIVERED (0x40)
-#define MDP_MSG_FLAG_MULTIPART (0x20)
-#define MDP_MSG_FLAG_CANCELLED (0x10)
-#define MDP_MSG_FLAG_SERVICE_TYPE_MASK (0x0F)
-
-#define MDP_MSG_FLAG_SERVICE_CONFIRMATION (0x01)
-
-#define MDP_MSG_ID_MAX (0x003FFFFFFFFFFFFFul)
-#define MDP_MSG_ID_MASK (~(0xFFull << 56))
-
-#define MDP_GET_ID(_flags_and_id_) ((_flags_and_id_) & MDP_MSG_ID_MASK)
-
-#define MDP_MSG_FLAGS(X) (((uint64_t)(X)) << 56)
-
 //TODO: Destination peer ID - ?
 
-struct mdp_msg_header
-{
-    inline uint8_t get_flags() const { return flags_and_id >> 56; }
-    inline uint64_t get_id() const { return MDP_GET_ID(flags_and_id); }
-    inline void set_flags(uint8_t flags) { flags_and_id |= ((uint64_t)flags) << 56; }
-
-    uint64_t flags_and_id;
-
-    uint32_t msg_size_bytes;
-
-    uint32_t multipart_msg_block_seq_num;
-
-    uint32_t crc32;
-
-    //const void* get_data() const { return ((const uint8_t*)this) + sizeof(*this); }
-
-} __attribute__((packed));
-
-
-struct mdp_msg_confirmation_error
-{
-    uint32_t multipart_msg_block_seq_num;
-    uint32_t flags;
-    uint32_t data; // crc32 or msg length
-} __attribute__((packed));
-
-struct mdp_msg_confirmation_header
-{
-    // mdp_msg_header header;
-
-    uint64_t complete_confirmed_msg_id; // non-decreasing sequence of delivered msg ID - confirmes confirmation received
-
-
-
-    // optional confirmation bitmap
-
-    // optional error list
-
-} __attribute__((packed));
 
 /*
   1-st step:
     - w/o multipart messages
     - w/o retransmit and timeouts
     - w/o settings negotiation (defaults)
-    - w/o 
+    - w/o
 
 */
 
