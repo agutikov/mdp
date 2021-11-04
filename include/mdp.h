@@ -1,36 +1,30 @@
 #pragma once
 
 /*
- * SPRMDP - Simple Parallel Reliable Message Delivery Protocol.
+ * MDP - Message Delivery Protocol.
  *
  */
 
-
+#include "asio/ip/udp.hpp"
 #include <cstdint>
 #include <list>
 #include <vector>
 
-//TODO: Destination peer ID - ?
+using asio::ip::udp;
+
+using mdp_endpoint_t = udp::endpoint;
 
 
-/*
-  1-st step:
-    - w/o multipart messages
-    - w/o retransmit and timeouts
-    - w/o settings negotiation (defaults)
-    - w/o
+std::string to_string(const mdp_endpoint_t& ep);
 
-*/
+void mdp_start_receiver(const mdp_endpoint_t& ep);
 
-//TODO: multiple ports per instance
-//TODO: multiple instances per process
-
-//TODO: mdp_config, from dict, from string
-//TODO: mdp_stats, to dict, to string
+void mdp_start_sender(const mdp_endpoint_t& ep);
+void mdp_start_sender();
 
 
-void mdp_start_receiver(const char* listen_addr, uint16_t listen_port);
-void mdp_start_sender(const char* dest_addr, uint16_t dest_port);
+extern asio::io_context io_context;
+
 
 // return peer ID
 uint64_t mdp_connect(const char* host, uint16_t port);

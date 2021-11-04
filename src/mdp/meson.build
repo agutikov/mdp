@@ -1,5 +1,5 @@
 
-lib_sources = files('mdp.cc', 'net.cc')
+lib_sources = files('mdp.cc')
 
 
 mdp_lib = shared_library('mdp', lib_sources,

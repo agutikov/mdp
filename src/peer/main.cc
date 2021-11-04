@@ -11,19 +11,25 @@ using namespace std::chrono_literals;
 int main(int argc, const char* argv[])
 {
     if (argc < 2) {
-        fprintf(stderr, "Usage:\n\t %s <listen_addr:listen_port> [<dest_addr:dest_port>]\n", argv[0]);
+        fprintf(stderr, "Usage:\n\t %s listen_addr listen_port  [peer_addr peer_port]\n", argv[0]);
         exit(1);
     }
 
+    udp::resolver resolver(io_context);
 
-    mdp_start_receiver(argv[1], 0);
+    udp::endpoint bind_ep = *resolver.resolve(argv[1], argv[2]).begin();
 
-    if (argc == 3) {
-        mdp_start_sender(argv[2], 0);
+    printf("sizeof(endpoint) = %d\n", sizeof(bind_ep));
+
+    mdp_start_receiver(bind_ep);
+
+    if (argc == 5) {
+        udp::endpoint peer_ep = *resolver.resolve(argv[3], argv[4]).begin();
+
+        mdp_start_sender(peer_ep);
     } else {
-        mdp_start_sender(nullptr, 0);
+        mdp_start_sender();
     }
-
 
 
     while (true) {

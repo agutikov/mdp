@@ -10,6 +10,8 @@ thread_dep = dependency('threads')
 
 cxx = meson.get_compiler('cpp')
 
+assert(cxx.has_header('asio.hpp'), 'Asio required, please install e.g. "apt install libasio-dev"')
+
 #assert(cxx.has_header('google/dense_hash_set'), 'google sparsehash required, please install e.g. "apt install libsparsehash-dev"')
 
 #judy_lib_dep = declare_dependency(link_args: '-lJudy')
