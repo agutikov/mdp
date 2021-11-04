@@ -5,19 +5,15 @@ https://think-async.com/Asio/asio-1.18.1/doc/asio/overview/networking/bsd_socket
 
 
 
-TODO: single thread per endpoint
-  two thread - sender and receiver
-  multiple threads
-  dynamic number of threads - ?
+TODO: cleanup existing code, remove static vars, use C++ containers and simple locks
+
+TODO: in-code TODOs
 
 
 TODO: Temporary simple replacement for buffer
 
   Later will make iovec-based buffer sequence.
-  Eliminate memory copy - use refcounted iovecs.
-  Custom allocator for memory blocks.
-  For example - simple allocator with all blocks of max packet size.
-  With free list of iovecs.
+
 
 
 TODO: received and delivered message state
@@ -88,9 +84,48 @@ TODO: crc
 
 TODO: multi-packet messages
 
+
+TODO: iovec-based buffer sequence
+  Eliminate memory copy - use refcounted iovecs.
+  Custom allocator for memory blocks.
+  For example - simple allocator with all blocks of max packet size.
+  With free list of iovecs.
+
+
+
+TODO: threads
+  total or per endpoint
+  - single thread
+  - two thread: sender and receiver
+  - multiple threads: sender, receiver, send preparer, received handler, etc...
+  - dynamic number of threads - ???
+  - asyncronous implementation options:
+    - asio
+    - coroutines
+    - seastar
+    - boost fiber - network???
+    - event loops: libevent, libuv, libev, libuev, https://cpp.libhunt.com/libs/asynchronous-event-loop
+
+
+TODO: performance
+  lock-free queues
+  trie as map
+  preallocate all buffers, only move pointers
+
+
 TODO: MTU auto-detect
 
 TODO: description in English
+
+
+======================================
+
+IO performance
+
+- libaio (io_submit, etc...)
+- io_uring
+- DPDK
+
 
 
 ======================================
@@ -143,16 +178,7 @@ retransmits, confirmations, timeouts
 
 complete algorythm implementation
 
-======================================
 
-lock-free queues
-trie as map
-preallocate all buffers, only move pointers
-
-======================================
-
-
-mustipart messages
 
 
 ======================================
@@ -172,6 +198,12 @@ multithread send
 
 //TODO: mdp_config, from dict, from string
 //TODO: mdp_stats, to dict, to string
+
+
+
+//TODO: Solve problen how to drop connection? When one side forget about peer then it re-creates it after receiving next heartbeat.
+
+
 
 ===========================
 

@@ -1,130 +1,118 @@
 
+We start and start sending and receiving messages in parallel.
+Singe packet and multiple-packet messages.
+Priority and general dispatch queues.
+Two lists of received messages on the receiving side.
+Additional queue for confirmations and service messages.
+Confirmation:
+- A sends data to B
+- B receives data from A
+- B sends confirmation to A
+- A receives confirmation from B
+- And I am sure that the message has been delivered, you can delete
+QUESTION: When will B be sure that the confirmation has been delivered?
 
-/*
- * Стартуем и начинаем отправлять и принимать сообщения параллельно.
- * Сообщения из одного пакета.
- * Сообщения из нескольких пакетов.
- * Приоритетная и общая очереди на отправку.
- * Два списка принятых сообщений на принимающей стороне.
- * Дополнительная очередь для подтверждений и служебных сообщений.
- * Подтверждение:
- * - А отправляет данные В
- * - В принимает данные от А
- * - В отправляет подтверждение А
- * - А принимает подтверждение от В
- * - А уверен что сообщение доставлено, можно удалять
- * ВОПРОС: Когда В будет уверен что подтверждение доставлено?
- *
- * С двух сторон счетчики подтвержденных доставок с неприрывным номером.
- * С каждым пакетом подтверждений идут эти счетчики которые позволяют
- * обрезать очередь ожидающих подтверждений.
- *
- * Сообщение ждет пока не подтвердятся все его пакеты.
- * Пакет ждет пока не придет подтверждение.
- * Подтверждение ждет пока не придет счетчик который больше его номера.
- *
- * Подтверждение:
- * - тип, номер сообщения и флаг подтверждения если сообщение полностью доставлено
- * - размер сообщения
- * - битовая карта доставленных блоков - для много-пакетных сообщений
- * - список ошибок - с размерами или контрольными суммами
- *
- * Подтверждения для нескольких сообщений упаковываются в один пакет - сколько влезет.
- * Структуру служебных пакетов зафиксируем позже.
- * Подтверждения отправляются сразу после получения если не был превышен лимит
- * Если был - с определенной частотой, например не больше 1000 пакетов в секунду
- * Таким образом с MTU 1500, пусть до 1432-8 данных а это 118 подтверждений,
- * получится подтвердить максимум 118k пакетов в секунду. Если в каждом сообщении 1kb
- * данных - то это 115Mbyte/s - фактически лимит для Gigabit Ethernet. Для мультипакетных сообщений
- * получится больше (т.к. там битовая карта) если нет ошибок.
- * Для MTU 9000 соответственно 743k подтверждений или 5,66Gbyte/s данных - это лимит для 50Gbit.
- * Лимит подтверждений отдельно для каждого пира (потому что юзерспейсная библиотека).
- * В принципе нет причин не разрешать отправлять подтверждения на каждый пакет.
- *
- * Переотправки и таймауты.
- *
- * Сообщение:
- * - тип:
- *   - данные сообщения
- *     - однопакетное
- *     - много пакетное
- *   - служебные данные
- *     - подтверждение
- *     - установление соединения и обсуждение размера блока
- *   - зарезервированный флаг для подтверждения
- * - порядковый номер сообщения в пределах сессии
- *   - в начале придет пакетик с нулевым номером
- *     - все сбрасываем и начинаем сначала
- *   - потом определяем размер пакета которые пролазит
- *     - и договариваемся о размере блока для составных сообщений
- * - тип вместе с порядковым номером запихнуть в 64 бита
- * - размер всего сообщения
- * - смещение и размер блока данных
- * - как вариант - размер куска и номер блока
- *   - или только номер если договориться о размере заранее
- * - опционально - контрольная сумма
- *
- * Режим с предконфигурированными настройками соединения:
- * - используются настройки по умолчанию
- * - нулевое сообщение сразу с данными.
- *
- *
- * Интерфейс:
- * - отправить
- *   - сообщений
- *     - одно
- *     - несколько одинаковых
- *     - несколько разных
- *   - пир - IP:port
- *     - одному
- *     - нескольким
- * - самое обобщенное - отправить N сообщений, каждое одному или нескольким пирам
- * - получить список доставленных сообщений для одного, нескольких или всех пиров
- * - соединиться (автоматически происходит перед отправкой или приемом первого сообщения)
- * - получить список пиров
- * - получить список приняных сообщений от одного, нескольких или всех пиров.
- *
- *
- *
- * +++ Дополнительно
- * - Автоскейлинг пула потоков для отправки и приема.
- *
- */
+On both sides counters of confirmed deliveries with a continuous number.
+Each confirmation packet comes with these counters that allow
+trim the pending acknowledgments queue.
+
+The message waits until all its packets are confirmed.
+The packet waits until confirmation is received.
+Confirmation is waiting until the counter arrives, which is greater than its number.
+
+Confirmation:
+- message type, number and confirmation flag if the message is fully delivered
+- message size
+- bitmap of delivered blocks - for multi-packet messages
+- list of errors - with sizes or checksums
+
+Acknowledgments for several messages are packed in one package - as much as you like.
+We will fix the structure of service packages later.
+Confirmations are sent immediately after receiving if the limit has not been exceeded
+If there was - with a certain frequency, for example, no more than 1000 packets per second
+Thus, with an MTU of 1500, let up to 1432 - 8 data and this is 118 confirmations,
+you will be able to acknowledge a maximum of 118k packets per second. If in each message 1kb
+data - this is 115Mbyte / s - in fact, the limit for Gigabit Ethernet. For multi-packet messages
+it will get bigger (because there is a bitmap) if there are no errors.
+For MTU 9000, respectively, 743k confirmations or 5.66Gbyte / s of data is the limit for 50Gbit.
+Confirmation limit separately for each peer (because userspace library).
+In principle, there is no reason not to allow acknowledgments to be sent for every packet.
+
+Resend and timeouts.
+
+Message:
+- type of:
+  - message data
+    - one-pack
+    - a lot of batch
+  - service data
+    - the confirmation
+    - establishing a connection and discussing block size
+  - reserved flag for confirmation
+- serial number of the message within the session
+  - at the beginning, a packet with a zero number will come
+    - we reset everything and start over
+  - then we determine the size of the package that will go through
+    - and agree on the block size for compound messages
+- push the type together with the serial number into 64 bits
+- the size of the entire message
+- offset and size of the data block
+- as an option - the size of the piece and the number of the block
+  - or just the number if you agree on the size in advance
+- optional - checksum
+
+Mode with pre-configured connection settings:
+- default settings are used
+- zero message immediately with data.
 
 
-/*
+Interface:
+- send
+  - messages
+    - one
+    - several identical
+    - several different
+  - peer - IP: port
+    - one
+    - several
+- the most general is to send N messages, each to one or more peers
+- get a list of delivered messages for one, several or all peers
+- connect (automatically occurs before sending or receiving the first message)
+- get a list of peers
+- get a list of received messages from one, several or all peers.
 
-- интерфейс
-  - уровни:
-     - интерфейс
-  - пиры
-    - отправляемые сообщения
-      - вместе со структурами ожидающими подтверждения доставки
-    - неубывающая последовательность полностью подтвержденных отправленных сообщений (счетчик)
-    - принимаемые сообщения
-    - подтверждения приняных сообщений ожидающие тримминга счетчиком с другой стороны
-    - принятые сообщения ожидающие когда их прочитает кто-то снаружи интерфейса
-  - сообщения
-    - разбиение на пакеты, сборка целого сообщения
-    - таймауты
-      - на отправку сообщений
-    - ретрансмиты
-      - пакетов сообщений
-      - пакетов подтверждений
-  - пакеты
+
+
++++ Optional
+- Autoscaling of the pool of threads for sending and receiving.
+
+
+
+
+- interface
+  - levels:
+     - interface
+  - feasts
+    - sent messages
+      - together with structures awaiting confirmation of delivery
+    - non-decreasing sequence of fully acknowledged sent messages (counter)
+    - received messages
+    - acknowledgments of received messages awaiting trimming by the counter on the other side
+    - received messages waiting to be read by someone outside the interface
+  - messages
+    - splitting into packages, assembling the whole message
+    - timeouts
+      - to send messages
+    - retransmits
+      - message packs
+      - confirmation packages
+  - packages
     -
-  - интерфейс библиотек для работы с сетью (sendmmsg, recvmmsg)
-- жизненный цикл отправляемых сообщений
-- жизненный цикл принимаемых сообщений
-- подсистемы:
-  - slab аллокатор для используемых структур данных
-    - для начала можно заменить обычными shared_ptr
-  - для поиска по id сообщения можно заюзать trie
-  - сначала заимплементить логику на STL, а потом уже оптимизировать
-
-
- *
- *
- *
- *
- */
+  - library interface for networking (sendmmsg, recvmmsg)
+- life cycle of sent messages
+- life cycle of received messages
+- subsystems:
+  - slab allocator for used data structures
+    - for a start, you can replace with ordinary shared_ptr
+  - you can use trie to search by message id
+  - first implement the logic in STL, and then optimize

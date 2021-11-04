@@ -80,7 +80,6 @@ struct mdp_msg_confirmation_header
 
 
 
-//TODO: Solve problen how to drop connection? When one side forget about peer then it re-creates it after receiving next heartbeat.
 
 // Forget about peer after heartbeat timeout
 auto heartbeat_timeout = 10s;
@@ -128,7 +127,7 @@ struct mdp_confirmation
 #define CONFIRMATION_BATCH_SIZE 1270
 
 struct mdp_peer
-{ //TODO: receiver and sender
+{
     uint64_t id;
     mdp_endpoint_t addr;
 
@@ -880,27 +879,6 @@ void mdp_start_sender()
 
     fprintf(stderr, "[*] Starting sender thread\n");
     sender_thread = std::thread(sender_thread_loop);
-}
-
-
-
-uint64_t mdp_connect(const char* host, uint16_t port)
-{
-
-    return 0;
-}
-
-uint64_t mdp_enqueue(uint64_t peer_id, void* data, size_t length, size_t timeout_us)
-{
-
-    return 0;
-}
-
-std::list<std::vector<uint8_t>> mdp_get_rcvd(uint64_t peer_id)
-{
-
-
-    return {};
 }
 
 
