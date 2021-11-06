@@ -1,12 +1,11 @@
 
 #include "mdp.h"
 #include <chrono>
-#include <thread>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 
 using namespace std::chrono_literals;
-
 
 int main(int argc, const char* argv[])
 {
@@ -31,7 +30,6 @@ int main(int argc, const char* argv[])
         mdp_start_sender();
     }
 
-
     while (true) {
         mdp_print_state();
         std::this_thread::sleep_for(1s);
@@ -39,4 +37,3 @@ int main(int argc, const char* argv[])
 
     return 0;
 }
-

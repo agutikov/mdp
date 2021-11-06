@@ -1,25 +1,21 @@
 
 #include "mdp.h"
 
+#include <algorithm>
+#include <arpa/inet.h>
+#include <atomic>
+#include <chrono>
+#include <cstring>
+#include <iostream>
 #include <map>
 #include <memory>
-#include <chrono>
-#include <thread>
-#include <string>
-#include <iostream>
-#include <cstring>
 #include <mutex>
-#include <atomic>
-#include <algorithm>
-#include <queue>
-#include <arpa/inet.h>
 #include <netinet/in.h>
-
-
+#include <queue>
+#include <string>
+#include <thread>
 
 using namespace std::chrono_literals;
-
-
 
 #define MDP_MSG_FLAG_SERVICE (0x80)
 #define MDP_MSG_FLAG_DELIVERED (0x40)
@@ -32,11 +28,9 @@ using namespace std::chrono_literals;
 #define MDP_MSG_ID_MAX (0x003FFFFFFFFFFFFFul)
 #define MDP_MSG_ID_MASK (~(0xFFull << 56))
 
-#define MDP_GET_ID(_flags_and_id_) ((_flags_and_id_) & MDP_MSG_ID_MASK)
+#define MDP_GET_ID(_flags_and_id_) ((_flags_and_id_)&MDP_MSG_ID_MASK)
 
 #define MDP_MSG_FLAGS(X) (((uint64_t)(X)) << 56)
-
-
 
 struct mdp_msg_header
 {
@@ -52,10 +46,9 @@ struct mdp_msg_header
 
     uint32_t crc32;
 
-    //const void* get_data() const { return ((const uint8_t*)this) + sizeof(*this); }
+    // const void* get_data() const { return ((const uint8_t*)this) + sizeof(*this); }
 
 } __attribute__((packed));
-
 
 struct mdp_msg_confirmation_error
 {
@@ -70,22 +63,16 @@ struct mdp_msg_confirmation_header
 
     uint64_t complete_confirmed_msg_id; // non-decreasing sequence of delivered msg ID - confirmes confirmation received
 
-
-
     // optional confirmation bitmap
 
     // optional error list
 
 } __attribute__((packed));
 
-
-
-
 // Forget about peer after heartbeat timeout
 auto heartbeat_timeout = 10s;
 
 auto heartbeat_period = 100ms;
-
 
 struct mdp_transmission
 {
@@ -108,8 +95,7 @@ struct mdp_confirmation
     std::chrono::steady_clock::time_point next_restransmit;
 
     mdp_confirmation(uint64_t flags_and_id) :
-        flags_and_id(flags_and_id),
-        next_restransmit(std::chrono::steady_clock::now() + heartbeat_period*2)
+        flags_and_id(flags_and_id), next_restransmit(std::chrono::steady_clock::now() + heartbeat_period * 2)
     {}
 
     void inc()
@@ -118,10 +104,7 @@ struct mdp_confirmation
         next_restransmit += (1 << retransmit_count) * heartbeat_period;
     }
 
-    bool need_to_send() const
-    {
-        return next_restransmit < std::chrono::steady_clock::now();
-    }
+    bool need_to_send() const { return next_restransmit < std::chrono::steady_clock::now(); }
 };
 
 #define CONFIRMATION_BATCH_SIZE 1270
@@ -222,18 +205,17 @@ struct mdp_peer
     // list of received messages, sinle-packet messages goes directly here
     std::list<std::vector<uint8_t>> rcvd;
 
-    mdp_peer()
-    {
-        first_confirmations.push(std::vector<uint64_t>());
-    }
+    mdp_peer() { first_confirmations.push(std::vector<uint64_t>()); }
 
     void print()
     {
-        printf("peer %ld %s: ccmid=%ld pccmid=%ld\n", id, to_string(addr).c_str(),
-                complete_confirmed_msg_id, peers_complete_confirmed_msg_id);
+        printf("peer %ld %s: ccmid=%ld pccmid=%ld\n",
+               id,
+               to_string(addr).c_str(),
+               complete_confirmed_msg_id,
+               peers_complete_confirmed_msg_id);
     }
 };
-
 
 struct mdp_iovecs
 {
@@ -251,7 +233,7 @@ std::vector<std::shared_ptr<mdp_peer>> get_all_peers()
     std::vector<std::shared_ptr<mdp_peer>> all_peers;
 
     std::lock_guard<std::mutex> lock(peer_mutex);
-    std::transform(peer_by_addr.begin(), peer_by_addr.end(), std::back_inserter(all_peers), [](auto p){return p.second;});
+    std::transform(peer_by_addr.begin(), peer_by_addr.end(), std::back_inserter(all_peers), [](auto p) { return p.second; });
 
     return std::move(all_peers);
 }
@@ -264,7 +246,6 @@ void dump_peers()
         peer->print();
     }
 }
-
 
 std::shared_ptr<mdp_peer> get_peer_by_addr(const mdp_endpoint_t& addr)
 {
@@ -297,18 +278,18 @@ std::shared_ptr<mdp_peer> new_peer(const mdp_endpoint_t& addr)
 std::shared_ptr<mdp_peer> get_or_create_peer(const mdp_endpoint_t& addr)
 {
     auto peer = get_peer_by_addr(addr);
-    //printf("get_or_create_peer %s %s %p %lu\n", std::string(addr).c_str(), peer ? std::string(peer->addr).c_str() : "null", peer.get(), peer_by_addr.size());
+    // printf("get_or_create_peer %s %s %p %lu\n", std::string(addr).c_str(), peer ? std::string(peer->addr).c_str() : "null",
+    // peer.get(), peer_by_addr.size());
     if (!peer) {
         peer = new_peer(addr);
     }
     return peer;
 }
 
-
 struct stats_t
 {
-	volatile uint64_t bps = 0;
-	volatile uint64_t pps = 0;
+    volatile uint64_t bps = 0;
+    volatile uint64_t pps = 0;
 
     uint64_t last_pps = 0;
     uint64_t last_bps = 0;
@@ -330,23 +311,21 @@ struct stats_t
         last_pps = now_pps;
         last_bps = now_bps;
 
-        printf("%s: %7.6fM pps %7.3fMiB/s, %8lu %7.3fGiB%s", title,
-                delta_pps / 1000.0 / 1000.0,
-                delta_bps / 1024.0 / 1024.0,
-                pps, bps / 1024.0 / 1024.0 / 1024.0,
-                tail);
+        printf("%s: %7.6fM pps %7.3fMiB/s, %8lu %7.3fGiB%s",
+               title,
+               delta_pps / 1000.0 / 1000.0,
+               delta_bps / 1024.0 / 1024.0,
+               pps,
+               bps / 1024.0 / 1024.0 / 1024.0,
+               tail);
     }
 };
 
-
-
-
-#define MTU_SIZE (2048-64*2)
+#define MTU_SIZE (2048 - 64 * 2)
 #define MAX_MSG 1024
 
-
-
-struct receiver_state {
+struct receiver_state
+{
     mdp_endpoint_t listen_addr;
 
     stats_t stats;
@@ -354,18 +333,17 @@ struct receiver_state {
 
     // mmsghdr contains pointer to sockaddr_in and array of iovec
     // mdp_iovecs contains MDP message header buffer and payload buffer
-	struct mmsghdr messages[MAX_MSG];
+    struct mmsghdr messages[MAX_MSG];
     struct sockaddr_in addrs[MAX_MSG];
-	mdp_iovecs iovecs[MAX_MSG];
+    mdp_iovecs iovecs[MAX_MSG];
     mdp_msg_header headers[MAX_MSG];
-	char buffers[MAX_MSG][MTU_SIZE];
-
+    char buffers[MAX_MSG][MTU_SIZE];
 
     receiver_state()
     {
         int i;
-    	for (i = 0; i < MAX_MSG; i++) {
-            struct mmsghdr *msg = &messages[i];
+        for (i = 0; i < MAX_MSG; i++) {
+            struct mmsghdr* msg = &messages[i];
 
             msg->msg_hdr.msg_iov = &(iovecs[i].header_iovec);
             msg->msg_hdr.msg_iovlen = 2;
@@ -380,8 +358,7 @@ struct receiver_state {
         }
     }
 
-} __attribute__ ((aligned (64)));
-
+} __attribute__((aligned(64)));
 
 asio::io_context io_context;
 
@@ -389,14 +366,12 @@ udp::socket sock(io_context);
 
 receiver_state rstate;
 
-
-
 void peer_copy_rcvd_data(std::shared_ptr<mdp_peer> peer, void* ptr, uint32_t size)
 {
     std::vector<uint8_t> v(size);
     memcpy(v.data(), ptr, v.size());
 
-    //peer->rcvd.push_back(std::move(v));
+    // peer->rcvd.push_back(std::move(v));
 
     if (peer->rcvd.size() >= 1000000) {
         peer->rcvd.clear();
@@ -405,7 +380,7 @@ void peer_copy_rcvd_data(std::shared_ptr<mdp_peer> peer, void* ptr, uint32_t siz
 
 void handle_data_msg(const mdp_msg_header* mdp_msg, const mdp_endpoint_t& peer_addr, const iovec* payload_iovec)
 {
-    //printf("%s\n", addr_to_str(&peer_addr));
+    // printf("%s\n", addr_to_str(&peer_addr));
 
     auto peer = get_or_create_peer(peer_addr);
 
@@ -419,7 +394,8 @@ void handle_data_msg(const mdp_msg_header* mdp_msg, const mdp_endpoint_t& peer_a
 void peer_consume_confirmations(std::shared_ptr<mdp_peer> peer, const uint64_t* confirms, int conf_number)
 {
     for (int i = 0; i < conf_number; i++) {
-        //printf("peer_consume_confirmations(): %d %d %lu %lu\n", conf_number, i, confirm_msg_id, peer->complete_confirmed_msg_id);
+        // printf("peer_consume_confirmations(): %d %d %lu %lu\n", conf_number, i, confirm_msg_id,
+        // peer->complete_confirmed_msg_id);
 
         if ((confirms[i] & MDP_MSG_FLAGS(MDP_MSG_FLAG_DELIVERED)) == MDP_MSG_FLAGS(MDP_MSG_FLAG_DELIVERED)) {
 
@@ -427,7 +403,8 @@ void peer_consume_confirmations(std::shared_ptr<mdp_peer> peer, const uint64_t* 
             // TODO: confirm message delivery (delete transmission)
 
             // update complete_confirmed_msg_id
-            // TODO: stub implementation - correct is getting min id of pending data messages (no pending data messages implemented)
+            // TODO: stub implementation - correct is getting min id of pending data messages (no pending data messages
+            // implemented)
             if (peer->complete_confirmed_msg_id < confirm_msg_id) {
                 peer->complete_confirmed_msg_id = confirm_msg_id;
             }
@@ -443,7 +420,7 @@ void handle_confirm_msg(const mdp_msg_header* mdp_msg, const mdp_endpoint_t& pee
 
     auto peer = get_or_create_peer(peer_addr);
 
-    //printf("handle_confirm_msg(): %d\n", conf_number);
+    // printf("handle_confirm_msg(): %d\n", conf_number);
 
     if (conf_number > 0) {
         // Producer side (data message sender)
@@ -460,30 +437,31 @@ void handle_service_msg(const mdp_msg_header* mdp_msg, const mdp_endpoint_t& pee
     }
 }
 
-
 mdp_endpoint_t from_msghdr(const msghdr* hdr)
 {
     mdp_endpoint_t ep;
     ep.resize(hdr->msg_namelen);
     memcpy(ep.data(), hdr->msg_name, ep.size());
 
-    //printf("msghdr(size=%d) -> endpoint(%s)\n", hdr->msg_namelen, to_string(ep).c_str());
+    // printf("msghdr(size=%d) -> endpoint(%s)\n", hdr->msg_namelen, to_string(ep).c_str());
 
     return ep;
 }
 
 void handle_rcvd_msg(const mmsghdr* msg, size_t length)
 {
-    //printf(">> %p %d %p %d\n", msg->msg_hdr.msg_name, msg->msg_hdr.msg_namelen, msg->msg_hdr.msg_control, msg->msg_hdr.msg_controllen);
+    // printf(">> %p %d %p %d\n", msg->msg_hdr.msg_name, msg->msg_hdr.msg_namelen, msg->msg_hdr.msg_control,
+    // msg->msg_hdr.msg_controllen);
 
     mdp_endpoint_t peer_addr = from_msghdr(&msg->msg_hdr);
 
-    const mdp_msg_header* mdp_msg = (const mdp_msg_header*) msg->msg_hdr.msg_iov->iov_base;
-    //printf("%s: %d 0x%02X %llu %d\n", addr_to_str(&peer_addr), msg->msg_len, mdp_msg->get_flags(), mdp_msg->get_id(), mdp_msg->msg_size_bytes);
+    const mdp_msg_header* mdp_msg = (const mdp_msg_header*)msg->msg_hdr.msg_iov->iov_base;
+    // printf("%s: %d 0x%02X %llu %d\n", addr_to_str(&peer_addr), msg->msg_len, mdp_msg->get_flags(), mdp_msg->get_id(),
+    // mdp_msg->msg_size_bytes);
 
     iovec* payload_iovec = &msg->msg_hdr.msg_iov[1];
 
-    //printf("handle_rcvd_msg 0x%02X 0x%016lX\n", mdp_msg->get_flags(), mdp_msg->flags_and_id);
+    // printf("handle_rcvd_msg 0x%02X 0x%016lX\n", mdp_msg->get_flags(), mdp_msg->flags_and_id);
 
     if ((mdp_msg->get_flags() & MDP_MSG_FLAG_SERVICE) == 0) {
         handle_data_msg(mdp_msg, peer_addr, payload_iovec);
@@ -496,7 +474,7 @@ static void handle_rcvd_msgs(int rcvd_count)
 {
     int i, bytes = 0;
     for (i = 0; i < rcvd_count; i++) {
-        struct mmsghdr *msg = &rstate.messages[i];
+        struct mmsghdr* msg = &rstate.messages[i];
         /* char *buf = msg->msg_hdr.msg_iov->iov_base; */
         int len = msg->msg_len;
 
@@ -513,7 +491,7 @@ static void receiver_thread_task()
 {
     /* Blocking recv. */
     int r = recvmmsg(sock.native_handle(), &rstate.messages[0], MAX_MSG, MSG_WAITFORONE, NULL);
-    //printf("recvmmsg %d\n", r);
+    // printf("recvmmsg %d\n", r);
     if (r <= 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             return;
@@ -527,9 +505,9 @@ static void receiver_thread_task()
 
 static void receiver_thread_loop()
 {
-	while (1) {
+    while (1) {
         receiver_thread_task();
-	}
+    }
 }
 
 char _payload[1024] = "0123456789_0123456789_0123456789";
@@ -540,20 +518,20 @@ struct sender_state
 
     int64_t last_id = 1;
 
-	mdp_endpoint_t target_addr;
+    mdp_endpoint_t target_addr;
 
-	int messages_capacity = 1024;
+    int messages_capacity = 1024;
     int msg_count = 0;
     int msg_sent = 0;
-    struct mmsghdr *messages; //TODO: add endpoints where mmsghtd::msg_hdr::msg_name will point
+    struct mmsghdr* messages; // TODO: add endpoints where mmsghtd::msg_hdr::msg_name will point
 
-	int payload_max_size = 1024;
+    int payload_max_size = 1024;
     char* payloads = nullptr;
 
-    mdp_iovecs *iovecs;
-    mdp_msg_header *headers;
+    mdp_iovecs* iovecs;
+    mdp_msg_header* headers;
 
-	stats_t stats;
+    stats_t stats;
     stats_t data_stats; // count confirmed data
 
     int msg_confirms_capacity;
@@ -565,16 +543,16 @@ struct sender_state
         messages = (mmsghdr*)calloc(messages_capacity, sizeof(struct mmsghdr));
         iovecs = (mdp_iovecs*)calloc(messages_capacity, sizeof(struct mdp_iovecs));
         headers = (mdp_msg_header*)calloc(messages_capacity, sizeof(struct mdp_msg_header));
-        payloads = (char*) malloc(messages_capacity * payload_max_size);
+        payloads = (char*)malloc(messages_capacity * payload_max_size);
 
         for (int i = 0; i < messages_capacity; i++) {
-            struct mdp_iovecs *iovec = &iovecs[i];
-            struct mmsghdr *msg = &messages[i];
+            struct mdp_iovecs* iovec = &iovecs[i];
+            struct mmsghdr* msg = &messages[i];
 
             msg->msg_hdr.msg_iov = &iovec->header_iovec;
             msg->msg_hdr.msg_iovlen = 2;
 
-            iovec->payload_iovec.iov_base = (void*) (payloads + i*payload_max_size);
+            iovec->payload_iovec.iov_base = (void*)(payloads + i * payload_max_size);
             iovec->payload_iovec.iov_len = 0;
 
             iovec->header_iovec.iov_base = (void*)&headers[i];
@@ -601,11 +579,11 @@ void* sstate_prepare_msg(const mdp_endpoint_t& addr, uint32_t size, uint64_t fla
     }
 
     // get message pointer
-    struct mmsghdr *msg = &(sstate.messages[sstate.msg_count]);
+    struct mmsghdr* msg = &(sstate.messages[sstate.msg_count]);
 
     // fill UDP destination address
-    //TODO: Lifetime of the peer and address
-    msg->msg_hdr.msg_name = (void*)addr.data(); //TODO: Lifetime
+    // TODO: Lifetime of the peer and address
+    msg->msg_hdr.msg_name = (void*)addr.data(); // TODO: Lifetime
     msg->msg_hdr.msg_namelen = addr.size();
 
     // fill MDP message header
@@ -636,7 +614,9 @@ void* sstate_prepare_service_msg(const mdp_endpoint_t& addr, uint8_t flags, uint
 }
 
 // Do not check if will fit messages, expect caller will not try to send more than allowed
-void sstate_prepare_confirmations(const mdp_endpoint_t& addr, uint64_t complete_confirmed_msg_id, const std::vector<uint64_t>& confirmations)
+void sstate_prepare_confirmations(const mdp_endpoint_t& addr,
+                                  uint64_t complete_confirmed_msg_id,
+                                  const std::vector<uint64_t>& confirmations)
 {
     auto conf_it = confirmations.begin();
     auto end = confirmations.end();
@@ -651,7 +631,7 @@ void sstate_prepare_confirmations(const mdp_endpoint_t& addr, uint64_t complete_
 
         uint32_t size = (this_msg_conf_capacity + 1) * sizeof(uint64_t);
 
-        uint64_t* confirms = (uint64_t*) sstate_prepare_service_msg(addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, size);
+        uint64_t* confirms = (uint64_t*)sstate_prepare_service_msg(addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, size);
         if (confirms == nullptr) {
             break;
         }
@@ -660,10 +640,7 @@ void sstate_prepare_confirmations(const mdp_endpoint_t& addr, uint64_t complete_
         *confirms++ = complete_confirmed_msg_id;
 
         // Fill MDP table of confirmations
-        for (int confirms_count = 0;
-            conf_it != end && confirms_count < this_msg_conf_capacity;
-            conf_it++, confirms_count++)
-        {
+        for (int confirms_count = 0; conf_it != end && confirms_count < this_msg_conf_capacity; conf_it++, confirms_count++) {
             *confirms++ = *conf_it;
         }
 
@@ -686,7 +663,6 @@ bool sstate_prepare_peer_first_confirm_msgs(std::shared_ptr<mdp_peer> peer)
     return false;
 }
 
-
 bool sstate_prepare_peer_confirm_msgs(std::shared_ptr<mdp_peer> peer)
 {
     std::vector<uint64_t> confirmations_to_send = peer->get_confirmations_to_send();
@@ -706,7 +682,7 @@ bool sstate_prepare_peer_heartbeat_msg(std::shared_ptr<mdp_peer> peer)
         return false;
     }
 
-    uint64_t* confirms = (uint64_t*) sstate_prepare_service_msg(peer->addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, sizeof(uint64_t));
+    uint64_t* confirms = (uint64_t*)sstate_prepare_service_msg(peer->addr, MDP_MSG_FLAG_SERVICE_CONFIRMATION, sizeof(uint64_t));
     if (confirms == nullptr) {
         return false;
     }
@@ -720,10 +696,8 @@ void sstate_prepare_peer_confirms(std::shared_ptr<mdp_peer> peer)
 {
     peer->trim_confirmations();
 
-    if (sstate_prepare_peer_first_confirm_msgs(peer)
-        || sstate_prepare_peer_confirm_msgs(peer)
-        || sstate_prepare_peer_heartbeat_msg(peer))
-    {
+    if (sstate_prepare_peer_first_confirm_msgs(peer) || sstate_prepare_peer_confirm_msgs(peer) ||
+        sstate_prepare_peer_heartbeat_msg(peer)) {
         peer->last_heartbeat_sent = std::chrono::steady_clock::now();
     }
 }
@@ -741,12 +715,11 @@ int64_t number_of_load_messages = 1000'000'000;
 
 static void sender_generate_load()
 {
-    for (int count = 0;
-        sstate.msg_count < sstate.messages_capacity && number_of_load_messages > 0 && count < 32;
-        number_of_load_messages--, count++)
-    {
-        //TODO: Nobody waits for confirmation, because peer not created yet, because data msgs generated inside sender thread
-        void* data = sstate_prepare_data_msg(sstate.target_addr, sstate.payload_max_size, sstate.last_id++); // peer->last_sended_msg_id
+    for (int count = 0; sstate.msg_count < sstate.messages_capacity && number_of_load_messages > 0 && count < 32;
+         number_of_load_messages--, count++) {
+        // TODO: Nobody waits for confirmation, because peer not created yet, because data msgs generated inside sender thread
+        void* data =
+            sstate_prepare_data_msg(sstate.target_addr, sstate.payload_max_size, sstate.last_id++); // peer->last_sended_msg_id
         if (data) {
             memset(data, 0xAB, sstate.payload_max_size);
         } else {
@@ -758,7 +731,7 @@ static void sender_generate_load()
 static void sender_send_messages()
 {
     if (sstate.msg_count == 0) {
-        std::this_thread::sleep_for(1ms); //TODO: Look for a better way :)
+        std::this_thread::sleep_for(1ms); // TODO: Look for a better way :)
         return;
     }
 
@@ -766,7 +739,7 @@ static void sender_send_messages()
     // Send packets
     while (sstate.msg_sent < sstate.msg_count) {
 
-        //printf("sendmmsg(): msg_count=%d, msg_sent=%d\n", sstate.msg_count, sstate.msg_sent);
+        // printf("sendmmsg(): msg_count=%d, msg_sent=%d\n", sstate.msg_count, sstate.msg_sent);
 
         int r = sendmmsg(sock.native_handle(), sstate.messages + sstate.msg_sent, sstate.msg_count - sstate.msg_sent, 0);
         if (r <= 0) {
@@ -789,7 +762,7 @@ static void sender_send_messages()
         // Count sent bytes and messages
         int i, bytes = 0;
         for (i = sstate.msg_sent; i < sstate.msg_sent + r; i++) {
-            struct mmsghdr *msg = &sstate.messages[i];
+            struct mmsghdr* msg = &sstate.messages[i];
             /* char *buf = msg->msg_hdr.msg_iov->iov_base; */
             bytes += msg->msg_len;
             msg->msg_hdr.msg_flags = 0;
@@ -815,42 +788,40 @@ static void sender_thread_task()
 
     sender_send_messages();
 
-    //std::this_thread::sleep_for(1s);
+    // std::this_thread::sleep_for(1s);
 }
 
 static void sender_thread_loop()
 {
-	while (1) {
+    while (1) {
         sender_thread_task();
-	}
+    }
 }
-
 
 std::string to_string(const mdp_endpoint_t& ep)
 {
     return ep.address().to_string() + ":" + std::to_string(ep.port());
 }
 
-
-
 std::thread receiver_thread;
 std::thread sender_thread;
 
-
 void mdp_start_receiver(const mdp_endpoint_t& ep)
 {
-    int buf_size = 16*1024*1024;
+    int buf_size = 16 * 1024 * 1024;
 
     rstate.listen_addr = ep;
 
     // Bind receiver
 
-    fprintf(stderr, "[*] Starting udpreceiver on %s, send/recv buffer %iKiB\n",
-                    to_string(rstate.listen_addr).c_str(), buf_size / 1024);
+    fprintf(stderr,
+            "[*] Starting udpreceiver on %s, send/recv buffer %iKiB\n",
+            to_string(rstate.listen_addr).c_str(),
+            buf_size / 1024);
 
     sock.open(rstate.listen_addr.protocol());
 
-    //sock.set_option(udp::socket::reuse_address(true));
+    // sock.set_option(udp::socket::reuse_address(true));
 
     sock.bind(rstate.listen_addr);
 
@@ -880,8 +851,6 @@ void mdp_start_sender()
     fprintf(stderr, "[*] Starting sender thread\n");
     sender_thread = std::thread(sender_thread_loop);
 }
-
-
 
 void mdp_print_state()
 {
